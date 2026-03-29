@@ -485,8 +485,15 @@ Return the JSON object now:`;
         localStorage.setItem('cb_github_token', val);
       } else if (field in state.config) {
         state.config[field] = val;
-        // Only re-render for checkboxes to avoid cursor jump
-        if (el.type === 'checkbox') render();
+        if (el.type === 'checkbox') {
+          render();
+        } else {
+          // Update Next button state without full re-render (avoids cursor jump in text inputs)
+          const nextBtn = document.querySelector('[data-action="config-next"]');
+          if (nextBtn) nextBtn.disabled = !(state.config.title && state.config.repoName);
+          const repoHint = document.getElementById('repo-hint');
+          if (repoHint && field === 'repoName') repoHint.textContent = val ? 'Will be deployed to github.io/' + val + '/' : 'Lowercase, hyphens only. Will be deployed to github.io/your-repo/';
+        }
       }
     }
 
@@ -535,7 +542,7 @@ Return the JSON object now:`;
           <div class="form-row">
             <label>GitHub Repo Name *</label>
             <input type="text" data-field="repoName" value="${esc(c.repoName)}" placeholder="e.g. praxis5101-practice">
-            <div class="hint">Lowercase, hyphens only. Will be deployed to github.io/${esc(c.repoName || 'your-repo')}/</div>
+            <div class="hint" id="repo-hint">Lowercase, hyphens only. Will be deployed to github.io/${esc(c.repoName || 'your-repo')}/</div>
           </div>
         </div>
 
