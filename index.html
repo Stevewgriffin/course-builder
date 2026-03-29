@@ -46,14 +46,12 @@
     .btn-danger { background: rgba(248,81,73,0.15); color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
     .btn-danger:hover { background: rgba(248,81,73,0.25); }
     .btn-sm { padding: 5px 10px; font-size: 0.8rem; }
+    .btn-large { padding: 14px 28px; font-size: 1rem; }
     table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
     th { color: var(--gray); font-weight: 500; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.06em; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); text-align: left; }
     td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); vertical-align: middle; }
     td input[type="text"], td input[type="number"] { background: var(--navy-dark); border: 1px solid rgba(255,255,255,0.12); border-radius: 5px; color: var(--white); padding: 5px 8px; font-size: 0.88rem; width: 100%; outline: none; }
     td input:focus { border-color: var(--gold); }
-    .weight-total { font-size: 0.85rem; margin-top: 8px; }
-    .weight-total.ok { color: #3fb950; }
-    .weight-total.bad { color: #f85149; }
     .drop-zone { border: 2px dashed rgba(201,168,76,0.4); border-radius: 12px; padding: 48px; text-align: center; cursor: pointer; transition: all 0.2s; }
     .drop-zone.dragover, .drop-zone:hover { border-color: #c9a84c; background: rgba(201,168,76,0.05); }
     .drop-zone p { color: var(--gray); margin-top: 8px; font-size: 0.9rem; }
@@ -68,6 +66,7 @@
     .summary-card .stat-lbl { color: var(--gray); font-size: 0.78rem; margin-top: 2px; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(201,168,76,0.3); border-top-color: #c9a84c; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; }
+    .spinner-lg { width: 28px; height: 28px; border-width: 3px; }
     .status-badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.78rem; font-weight: 500; }
     .badge-idle { background: rgba(139,148,158,0.15); color: var(--gray); }
     .badge-running { background: rgba(201,168,76,0.15); color: var(--gold); }
@@ -117,8 +116,12 @@
     .toggle-vis { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--gray); cursor: pointer; font-size: 0.85rem; }
     .notice { padding: 10px 14px; border-radius: 6px; font-size: 0.85rem; margin-bottom: 12px; }
     .notice-info { background: rgba(56,139,253,0.1); border: 1px solid rgba(56,139,253,0.3); color: #79c0ff; }
-    .section-gen-row td { font-size: 0.88rem; }
     .error-msg { color: #f85149; font-size: 0.8rem; margin-top: 4px; }
+    .gen-progress { display: flex; align-items: center; gap: 14px; padding: 20px; }
+    .sections-result { margin-top: 12px; }
+    .sections-result .sec-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.88rem; }
+    .sections-result .sec-row:last-child { border-bottom: none; }
+    .sections-result .sec-count { color: var(--gold); font-weight: 600; font-size: 0.85rem; }
   </style>
 </head>
 <body>
@@ -129,12 +132,12 @@
     var state = {
       activeTab: 0,
       config: {
-        title: '', subtitle: '', repoName: '', sections: [],
+        title: '', subtitle: '', repoName: '',
         totalQuestions: 100, passingPct: 70, timerMinutes: 120,
         showCalculator: false, adminPasscode: '', adminPasscodeHash: '', footer: ''
       },
       pdf: { extractedText: '', wordCount: 0, pageCount: 0, files: [] },
-      questions: { all: [], generating: false, generatingSectionIdx: -1, errors: {} },
+      questions: { all: [], sections: [], generating: false, generatingStep: '', errors: [] },
       deploy: { status: 'idle', log: [], pagesUrl: '' },
       apiKey: localStorage.getItem('cb_api_key') || '',
       githubToken: localStorage.getItem('cb_github_token') || '',
@@ -198,99 +201,95 @@
     }
 
     // ---- API / Generation ----
-    async function generateSection(sectionName, count, startId) {
-      const prompt = `Create exactly ${count} multiple-choice questions for the section titled "${sectionName}".
-
-The questions must be based on this educational content:
----
-${state.pdf.extractedText.substring(0, 180000)}
----
-
-Return ONLY a JSON array. No markdown. No code fences. Raw JSON only.
-
-Each object: {"id":${startId},"section":"${sectionName}","question":"...?","options":["A","B","C","D"],"correct":0,"explanation":"..."}
-
-Rules:
-- id starts at ${startId}, increments by 1
-- correct is 0-3 (vary which index), question ends with ?
-- Mix recall, comprehension, application questions
-- Do NOT use "all of the above" or "none of the above"
-
-Return the JSON array now:`;
-
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': state.apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
-        body: JSON.stringify({
-          model: 'claude-opus-4-5',
-          max_tokens: Math.max(8192, count * 200),
-          system: 'You are an expert educator. Respond with valid JSON only — no markdown, no code fences.',
-          messages: [{role: 'user', content: prompt}]
-        })
-      });
-      if (!resp.ok) {
-        const e = await resp.json();
-        throw new Error(e.error?.message || `API ${resp.status}`);
-      }
-      const data = await resp.json();
-      let txt = data.content[0].text.trim();
-      const fence = txt.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (fence) txt = fence[1].trim();
-      return JSON.parse(txt);
-    }
-
     async function generateAll() {
       if (!state.apiKey) { alert('Please enter your API key first.'); return; }
       state.questions.generating = true;
       state.questions.all = [];
-      state.questions.errors = {};
+      state.questions.sections = [];
+      state.questions.errors = [];
+      state.questions.generatingStep = 'Analyzing book structure and generating questions...';
       render();
-      for (let i = 0; i < state.config.sections.length; i++) {
-        const sec = state.config.sections[i];
-        state.questions.generatingSectionIdx = i;
-        render();
-        try {
-          const startId = state.questions.all.length + 1;
-          const qs = await generateSection(sec.name, parseInt(sec.total) || 10, startId);
-          state.questions.all = state.questions.all.concat(qs);
-        } catch(e) {
-          state.questions.errors[i] = e.message;
-        }
-        if (i < state.config.sections.length - 1) await new Promise(r => setTimeout(r, 2000));
-      }
-      state.questions.generating = false;
-      state.questions.generatingSectionIdx = -1;
-      render();
-    }
 
-    async function retrySection(idx) {
-      const sec = state.config.sections[idx];
-      if (!sec) return;
-      delete state.questions.errors[idx];
-      state.questions.generating = true;
-      state.questions.generatingSectionIdx = idx;
-      render();
       try {
-        const existing = state.questions.all.filter(q => q.section !== sec.name);
-        const startId = existing.length + 1;
-        const qs = await generateSection(sec.name, parseInt(sec.total) || 10, startId);
-        state.questions.all = existing.concat(qs);
+        const total = parseInt(state.config.totalQuestions) || 100;
+        const text = state.pdf.extractedText.substring(0, 180000);
+
+        const prompt = `You are an expert educator analyzing a textbook to create a comprehensive test bank.
+
+Analyze this textbook content and:
+1. Identify the main chapters or sections (aim for 5-10 sections based on the book's structure)
+2. Generate exactly ${total} multiple-choice questions distributed proportionally across those sections
+
+Return ONLY a JSON object — no markdown, no code fences, raw JSON only.
+
+Required structure:
+{
+  "sections": [
+    {"name": "Chapter 1: Introduction to Psychology", "count": 15, "total": 15, "pct": "15%"}
+  ],
+  "questions": [
+    {"id": 1, "section": "Chapter 1: Introduction to Psychology", "question": "Question ending with ?", "options": ["Option A", "Option B", "Option C", "Option D"], "correct": 0, "explanation": "Why this answer is correct."}
+  ]
+}
+
+Rules:
+- sections: distribute question counts proportionally based on chapter length/importance; pct values must sum to 100%; count and total should be equal
+- questions: section field must exactly match one of the section names above; total questions must equal exactly ${total}; correct is 0-based index (0-3), vary which index is correct; question must end with ?
+- Mix recall, comprehension, and application questions
+- Do NOT use "all of the above" or "none of the above"
+- Distractors should be plausible, not obviously wrong
+
+Textbook content:
+---
+${text}
+---
+
+Return the JSON object now:`;
+
+        const resp = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': state.apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true'
+          },
+          body: JSON.stringify({
+            model: 'claude-opus-4-5',
+            max_tokens: Math.max(16384, total * 250),
+            system: 'You are an expert educator. Respond with valid JSON only — no markdown, no explanation, no code fences.',
+            messages: [{ role: 'user', content: prompt }]
+          })
+        });
+
+        if (!resp.ok) {
+          const e = await resp.json();
+          throw new Error(e.error?.message || `API error ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        let txt = data.content[0].text.trim();
+        // Strip markdown fences if present
+        const fence = txt.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (fence) txt = fence[1].trim();
+
+        const result = JSON.parse(txt);
+        state.questions.sections = result.sections || [];
+        state.questions.all = result.questions || [];
+        state.questions.generatingStep = '';
+
       } catch(e) {
-        state.questions.errors[idx] = e.message;
+        state.questions.errors = [e.message];
+        state.questions.generatingStep = '';
       }
+
       state.questions.generating = false;
-      state.questions.generatingSectionIdx = -1;
       render();
     }
 
     // ---- Tab logic ----
     function isTabDone(n) {
-      if (n === 0) return !!(state.config.title && state.config.repoName && state.config.sections.length > 0);
+      if (n === 0) return !!(state.config.title && state.config.repoName);
       if (n === 1) return state.pdf.extractedText.length > 100;
       if (n === 2) return state.questions.all.length > 0;
       if (n === 3) return state.questions.all.length > 0;
@@ -307,19 +306,9 @@ Return the JSON array now:`;
     }
 
     async function configNext() {
-      if (!state.config.title || !state.config.repoName || !state.config.sections.length) return;
+      if (!state.config.title || !state.config.repoName) return;
       state.config.adminPasscodeHash = await hashPasscode(state.config.adminPasscode);
       state.activeTab = 1;
-      render();
-    }
-
-    function addSection() {
-      state.config.sections.push({ name: 'New Section', count: 1, total: 10, pct: '' });
-      render();
-    }
-
-    function removeSection(idx) {
-      state.config.sections.splice(idx, 1);
       render();
     }
 
@@ -388,7 +377,7 @@ Return the JSON array now:`;
       const cfg = {
         title: c.title,
         subtitle: c.subtitle,
-        sections: c.sections.map(s => ({name: s.name, count: parseInt(s.count), total: parseInt(s.total), pct: s.pct + '%'})),
+        sections: state.questions.sections,  // AUTO-DISCOVERED by Claude
         totalQuestions: parseInt(c.totalQuestions),
         passingPct: parseInt(c.passingPct),
         showCalculator: c.showCalculator,
@@ -494,12 +483,6 @@ Return the JSON array now:`;
       } else if (field === 'githubToken') {
         state.githubToken = val;
         localStorage.setItem('cb_github_token', val);
-      } else if (field.startsWith('section-')) {
-        const parts = field.split('-');
-        const prop = parts[1];
-        const sidx = parseInt(parts[2]);
-        state.config.sections[sidx][prop] = val;
-        // Don't re-render on every keystroke for section fields — handled by input event
       } else if (field in state.config) {
         state.config[field] = val;
         // Only re-render for checkboxes to avoid cursor jump
@@ -536,20 +519,7 @@ Return the JSON array now:`;
 
     function renderConfig() {
       const c = state.config;
-      const weightTotal = c.sections.reduce((s, sec) => s + (parseFloat(sec.pct) || 0), 0);
-      const weightOk = Math.abs(weightTotal - 100) < 0.01 || c.sections.length === 0;
-      const canNext = !!(c.title && c.repoName && c.sections.length > 0);
-
-      let sectionsRows = '';
-      c.sections.forEach((sec, i) => {
-        sectionsRows += `<tr>
-          <td><input type="text" data-field="section-name-${i}" value="${esc(sec.name)}" placeholder="Section name"></td>
-          <td><input type="number" data-field="section-count-${i}" value="${esc(sec.count)}" min="1" style="width:60px"></td>
-          <td><input type="number" data-field="section-total-${i}" value="${esc(sec.total)}" min="1" style="width:70px"></td>
-          <td><input type="number" data-field="section-pct-${i}" value="${esc(sec.pct)}" min="0" max="100" step="0.1" placeholder="%" style="width:70px"></td>
-          <td><button class="btn btn-danger btn-sm" data-action="remove-section" data-idx="${i}">✕</button></td>
-        </tr>`;
-      });
+      const canNext = !!(c.title && c.repoName);
 
       return `<div>
         <h2>Course Configuration</h2>
@@ -570,34 +540,15 @@ Return the JSON array now:`;
         </div>
 
         <div class="card">
-          <h3>Sections</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Section Name</th>
-                <th>Session Count</th>
-                <th>Questions / Session</th>
-                <th>Weight %</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>${sectionsRows}</tbody>
-          </table>
-          <div style="margin-top:12px">
-            <button class="btn btn-secondary btn-sm" data-action="add-section">+ Add Section</button>
-          </div>
-          ${c.sections.length > 0 ? `<div class="weight-total ${weightOk ? 'ok' : 'bad'}">Weight total: ${weightTotal.toFixed(1)}%${weightOk ? ' ✓' : ' (must equal 100%)'}</div>` : ''}
-        </div>
-
-        <div class="card">
           <h3>Test Settings</h3>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
             <div class="form-row">
-              <label>Total Questions per Session</label>
+              <label>Total Questions to Generate</label>
               <input type="number" data-field="totalQuestions" value="${esc(c.totalQuestions)}" min="1">
+              <div class="hint">Claude distributes these across all discovered sections.</div>
             </div>
             <div class="form-row">
-              <label>Passing % </label>
+              <label>Passing %</label>
               <input type="number" data-field="passingPct" value="${esc(c.passingPct)}" min="1" max="100">
             </div>
             <div class="form-row">
@@ -678,38 +629,56 @@ Return the JSON array now:`;
     }
 
     function renderGenerate() {
-      const { all, generating, generatingSectionIdx, errors } = state.questions;
-      const sections = state.config.sections;
+      const { all, sections, generating, generatingStep, errors } = state.questions;
+      const total = parseInt(state.config.totalQuestions) || 100;
+      const hasQuestions = all.length > 0;
+      const hasError = errors.length > 0;
+      const canGenerate = !generating && !!state.apiKey;
 
-      let rows = '';
-      sections.forEach((sec, i) => {
-        const isRunning = generating && generatingSectionIdx === i;
-        const isError = errors[i];
-        const secQs = all.filter(q => q.section === sec.name);
-        const isDone = secQs.length > 0;
-        const target = parseInt(sec.total) || 10;
+      let bodyHtml = '';
 
-        let statusCell;
-        if (isRunning) {
-          statusCell = `<span class="spinner"></span> <span style="color:var(--gold);font-size:0.82rem">Generating…</span>`;
-        } else if (isError) {
-          statusCell = `<span class="status-badge badge-error">Error</span>`;
-        } else if (isDone) {
-          statusCell = `<span class="status-badge badge-done">${secQs.length} / ${target}</span>`;
-        } else {
-          statusCell = `<span class="status-badge badge-idle">Pending</span>`;
-        }
-
-        rows += `<tr class="section-gen-row">
-          <td>${esc(sec.name)}</td>
-          <td style="text-align:center">${target}</td>
-          <td>${statusCell}</td>
-          <td>${isError ? `<div class="error-msg">${esc(isError)}</div><button class="btn btn-secondary btn-sm" data-action="retry-section" data-idx="${i}">Retry</button>` : ''}</td>
-        </tr>`;
-      });
-
-      const canGenerate = !generating && state.apiKey;
-      const doneCount = Object.values(errors).length === 0 && all.length > 0;
+      if (generating) {
+        bodyHtml = `<div class="gen-progress">
+          <span class="spinner spinner-lg"></span>
+          <div>
+            <div style="color:var(--gold);font-weight:500">${esc(generatingStep || 'Working...')}</div>
+            <div style="color:var(--gray);font-size:0.82rem;margin-top:4px">This may take 1–2 minutes for large books. Please wait.</div>
+          </div>
+        </div>`;
+      } else if (hasError) {
+        bodyHtml = `<div style="padding:16px 0">
+          <div style="color:#f85149;margin-bottom:12px">${esc(errors[0])}</div>
+          <button class="btn btn-secondary" data-action="generate-all">Try Again</button>
+        </div>`;
+      } else if (hasQuestions) {
+        let sectionRows = '';
+        sections.forEach(sec => {
+          sectionRows += `<div class="sec-row">
+            <span>${esc(sec.name)}</span>
+            <span class="sec-count">${esc(String(sec.count))} questions</span>
+          </div>`;
+        });
+        bodyHtml = `<div style="padding:16px 0">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+            <span style="color:#3fb950;font-size:1.4rem">✓</span>
+            <div>
+              <div style="font-weight:600;color:#3fb950">Generated ${all.length} questions across ${sections.length} sections</div>
+            </div>
+          </div>
+          ${sectionRows.length ? `<div class="sections-result">${sectionRows}</div>` : ''}
+          <div style="margin-top:16px">
+            <button class="btn btn-secondary btn-sm" data-action="generate-all">Regenerate</button>
+          </div>
+        </div>`;
+      } else {
+        bodyHtml = `<div style="padding:16px 0;text-align:center">
+          <p style="color:var(--gray);font-size:0.9rem;margin-bottom:20px">Claude will analyze your PDF and automatically identify chapters/sections, then generate <strong style="color:var(--white)">${total} questions</strong> organized by section.</p>
+          <button class="btn btn-primary btn-large" data-action="generate-all" ${canGenerate ? '' : 'disabled'}>
+            🔍 Analyze &amp; Generate Questions
+          </button>
+          ${!state.apiKey ? `<div style="color:#f85149;font-size:0.82rem;margin-top:10px">Enter your API key above to continue.</div>` : ''}
+        </div>`;
+      }
 
       return `<div>
         <h2>Generate Questions</h2>
@@ -728,28 +697,11 @@ Return the JSON array now:`;
         </div>
 
         <div class="card">
-          <h3>Sections</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Section</th>
-                <th style="text-align:center">Questions</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-          <div style="margin-top:16px;display:flex;gap:10px;align-items:center">
-            <button class="btn btn-primary" data-action="generate-all" ${canGenerate ? '' : 'disabled'}>
-              ${generating ? '<span class="spinner"></span> Generating…' : '⚡ Generate All'}
-            </button>
-            ${all.length > 0 ? `<span style="color:var(--gray);font-size:0.85rem">${all.length} questions generated</span>` : ''}
-          </div>
+          ${bodyHtml}
         </div>
 
         <div class="bottom-bar">
-          <button class="btn btn-primary" data-action="generate-next" ${all.length > 0 ? '' : 'disabled'}>Next →</button>
+          <button class="btn btn-primary" data-action="generate-next" ${hasQuestions ? '' : 'disabled'}>Next: Preview →</button>
         </div>
       </div>`;
     }
@@ -916,16 +868,12 @@ Return the JSON array now:`;
       const el = e.target.closest('[data-action]');
       if (!el) return;
       const action = el.dataset.action;
-      const idx = el.dataset.idx !== undefined ? parseInt(el.dataset.idx) : null;
       switch(action) {
         case 'tab': switchTab(parseInt(el.dataset.tab)); break;
-        case 'add-section': addSection(); break;
-        case 'remove-section': removeSection(idx); break;
         case 'config-next': configNext(); break;
         case 'clear-pdfs': clearPDFs(); break;
         case 'pdf-next': switchTab(2); break;
         case 'generate-all': generateAll(); break;
-        case 'retry-section': retrySection(idx); break;
         case 'generate-next': switchTab(3); break;
         case 'preview-section': state.previewSection = el.dataset.section; render(); break;
         case 'toggle-explain': {
