@@ -814,14 +814,19 @@ Return the JSON object now:`;
         <h2>Deploy to GitHub Pages</h2>
         <div class="card">
           <h3>GitHub Personal Access Token</h3>
+          ${state.githubUser ? '' : `<div style="background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:8px;padding:14px;margin-bottom:14px;font-size:0.88rem;color:var(--gray);line-height:1.6">
+            <strong style="color:var(--white)">First time only</strong> — your token is saved automatically after this. All future courses skip this step.<br><br>
+            <a href="https://github.com/settings/tokens/new?scopes=repo,pages&description=Compass+Institute+Course+Builder" target="_blank" class="btn btn-secondary btn-sm" style="text-decoration:none">🔑 Create Token on GitHub →</a>
+            <span style="margin-left:10px;color:var(--gray);font-size:0.82rem">Opens GitHub with the right settings pre-filled — just click Generate and paste below.</span>
+          </div>`}
           <div class="form-row">
             <div class="input-with-toggle">
               <input type="password" id="gh-token-inp" data-field="githubToken" value="${esc(state.githubToken)}" placeholder="ghp_...">
               <button class="toggle-vis" data-action="toggle-password" data-target="gh-token-inp">👁</button>
             </div>
-            <div class="hint">Requires: repo, pages scopes. Stored in localStorage.</div>
+            <div class="hint">${state.githubUser ? '✓ Token saved — reused automatically for all future courses.' : 'Requires: repo, pages scopes. Saved in your browser after first use.'}</div>
           </div>
-          <button class="btn btn-secondary btn-sm" data-action="validate-token">Validate Token</button>
+          <button class="btn btn-secondary btn-sm" data-action="validate-token">${state.githubUser ? '✓ Connected — re-validate' : 'Validate Token'}</button>
           ${userCard}
         </div>
 
@@ -933,6 +938,13 @@ Return the JSON object now:`;
     // ---- Init ----
     document.addEventListener('DOMContentLoaded', function() {
       render();
+      // Auto-validate saved GitHub token so returning users don't have to re-enter it
+      if (state.githubToken && !state.githubUser) {
+        fetch('https://api.github.com/user', { headers: ghHeaders(state.githubToken) })
+          .then(r => r.ok ? r.json() : null)
+          .then(user => { if (user) { state.githubUser = user; render(); } })
+          .catch(() => {});
+      }
     });
   </script>
 </body>
