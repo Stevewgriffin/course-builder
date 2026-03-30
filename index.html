@@ -133,7 +133,7 @@
       activeTab: 0,
       config: {
         title: '', subtitle: '', repoName: '',
-        totalQuestions: 100, passingPct: 70, timerMinutes: 120,
+        bankSize: 1000, questionsPerTest: 100, passingPct: 70, timerMinutes: 120,
         showCalculator: false, adminPasscode: '', adminPasscodeHash: '', footer: ''
       },
       pdf: { extractedText: '', wordCount: 0, pageCount: 0, files: [] },
@@ -211,21 +211,26 @@
       render();
 
       try {
-        const total = parseInt(state.config.totalQuestions) || 100;
+        const bankSize = parseInt(state.config.bankSize) || 1000;
+        const perTest  = parseInt(state.config.questionsPerTest) || 100;
         const text = state.pdf.extractedText.substring(0, 180000);
 
         const prompt = `You are an expert educator analyzing a textbook to create a comprehensive test bank.
 
 Analyze this textbook content and:
 1. Identify the main chapters or sections (aim for 5-10 sections based on the book's structure)
-2. Generate exactly ${total} multiple-choice questions distributed proportionally across those sections
+2. Generate exactly ${bankSize} multiple-choice questions distributed proportionally across those sections
+
+Each test session will randomly draw ${perTest} questions from the full bank of ${bankSize}, so:
+- "total" = how many questions you generate for that section (bank size per section)
+- "count" = how many are drawn per test session from that section (proportional share of ${perTest})
 
 Return ONLY a JSON object — no markdown, no code fences, raw JSON only.
 
 Required structure:
 {
   "sections": [
-    {"name": "Chapter 1: Introduction to Psychology", "count": 15, "total": 15, "pct": "15%"}
+    {"name": "Chapter 1: Introduction to Psychology", "count": 10, "total": 100, "pct": "10%"}
   ],
   "questions": [
     {"id": 1, "section": "Chapter 1: Introduction to Psychology", "question": "Question ending with ?", "options": ["Option A", "Option B", "Option C", "Option D"], "correct": 0, "explanation": "Why this answer is correct."}
@@ -233,8 +238,8 @@ Required structure:
 }
 
 Rules:
-- sections: distribute question counts proportionally based on chapter length/importance; pct values must sum to 100%; count and total should be equal
-- questions: section field must exactly match one of the section names above; total questions must equal exactly ${total}; correct is 0-based index (0-3), vary which index is correct; question must end with ?
+- sections: distribute proportionally based on chapter length/importance; pct values must sum to 100%; total = bank size for that section; count = Math.round(pct * ${perTest} / 100)
+- questions: section field must exactly match one of the section names; total questions must equal exactly ${bankSize}; correct is 0-based index (0-3), vary which index is correct; question must end with ?
 - Mix recall, comprehension, and application questions
 - Do NOT use "all of the above" or "none of the above"
 - Distractors should be plausible, not obviously wrong
@@ -256,7 +261,7 @@ Return the JSON object now:`;
           },
           body: JSON.stringify({
             model: 'claude-opus-4-5',
-            max_tokens: Math.max(16384, total * 250),
+            max_tokens: Math.max(16384, bankSize * 250),
             system: 'You are an expert educator. Respond with valid JSON only — no markdown, no explanation, no code fences.',
             messages: [{ role: 'user', content: prompt }]
           })
@@ -378,7 +383,7 @@ Return the JSON object now:`;
         title: c.title,
         subtitle: c.subtitle,
         sections: state.questions.sections,  // AUTO-DISCOVERED by Claude
-        totalQuestions: parseInt(c.totalQuestions),
+        totalQuestions: parseInt(c.questionsPerTest),
         passingPct: parseInt(c.passingPct),
         showCalculator: c.showCalculator,
         saveKey,
@@ -548,11 +553,16 @@ Return the JSON object now:`;
 
         <div class="card">
           <h3>Test Settings</h3>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:16px">
             <div class="form-row">
-              <label>Total Questions to Generate</label>
-              <input type="number" data-field="totalQuestions" value="${esc(c.totalQuestions)}" min="1">
-              <div class="hint">Claude distributes these across all discovered sections.</div>
+              <label>Question Bank Size</label>
+              <input type="number" data-field="bankSize" value="${esc(c.bankSize)}" min="10">
+              <div class="hint">Total questions Claude generates (e.g. 1000).</div>
+            </div>
+            <div class="form-row">
+              <label>Questions Per Test</label>
+              <input type="number" data-field="questionsPerTest" value="${esc(c.questionsPerTest)}" min="1">
+              <div class="hint">Randomly drawn each session (e.g. 100).</div>
             </div>
             <div class="form-row">
               <label>Passing %</label>
@@ -637,7 +647,8 @@ Return the JSON object now:`;
 
     function renderGenerate() {
       const { all, sections, generating, generatingStep, errors } = state.questions;
-      const total = parseInt(state.config.totalQuestions) || 100;
+      const total = parseInt(state.config.bankSize) || 1000;
+      const perTest = parseInt(state.config.questionsPerTest) || 100;
       const hasQuestions = all.length > 0;
       const hasError = errors.length > 0;
       const canGenerate = !generating && !!state.apiKey;
@@ -669,7 +680,7 @@ Return the JSON object now:`;
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
             <span style="color:#3fb950;font-size:1.4rem">✓</span>
             <div>
-              <div style="font-weight:600;color:#3fb950">Generated ${all.length} questions across ${sections.length} sections</div>
+              <div style="font-weight:600;color:#3fb950">✓ ${all.length}-question bank across ${sections.length} sections — ${perTest} drawn randomly per test session</div>
             </div>
           </div>
           ${sectionRows.length ? `<div class="sections-result">${sectionRows}</div>` : ''}
@@ -679,7 +690,7 @@ Return the JSON object now:`;
         </div>`;
       } else {
         bodyHtml = `<div style="padding:16px 0;text-align:center">
-          <p style="color:var(--gray);font-size:0.9rem;margin-bottom:20px">Claude will analyze your PDF and automatically identify chapters/sections, then generate <strong style="color:var(--white)">${total} questions</strong> organized by section.</p>
+          <p style="color:var(--gray);font-size:0.9rem;margin-bottom:20px">Claude will analyze your PDF, identify chapters/sections, and generate a <strong style="color:var(--white)">${total}-question bank</strong>. Each test session randomly draws <strong style="color:var(--white)">${perTest} questions</strong> — different every time.</p>
           <button class="btn btn-primary btn-large" data-action="generate-all" ${canGenerate ? '' : 'disabled'}>
             🔍 Analyze &amp; Generate Questions
           </button>
